@@ -730,30 +730,6 @@ def predict_matches_original_method(matches_df, cluster_models, record_clean,
     predictions = predictor.predict_matches_batch(matches_df)
     
     return predictions
-
-
-# 원본 코드의 예측 예시 재현
-if __name__ == "__main__":
-    print("원본 코드 기반 경기 예측 테스트")
-    
-    # 원본 코드의 경기 예시
-    matches = pd.DataFrame({
-        'home_team': ['Arsenal', 'Aston Villa', 'Brentford', 'Chelsea', 'Crystal Palace',
-                      'Everton', 'Leeds United', 'Leicester City', 'Manchester United', 'Southampton'],
-        'away_team': ['Wolverhampton Wanderers', 'Brighton & Hove Albion', 'Manchester City', 
-                      'Newcastle United', 'Nottingham Forest', 'Bournemouth', 'Tottenham Hotspur', 
-                      'West Ham United', 'Fulham', 'Liverpool']
-    })
-    
-    print("\n예측할 경기:")
-    for _, match in matches.iterrows():
-        print(f"  {match['home_team']} vs {match['away_team']}")
-    
-    # 원본 코드의 예측 결과 형식
-    print("\n예측 결과 (원본 코드 형식):")
-    print("인덱스: 홈팀 vs 어웨이팀")
-    print("컬럼: home_cluster, home, away_cluster, away, result")
-    print("값: 0=승, 1=무, 2=패")
 ```
 
 ---
@@ -761,15 +737,15 @@ if __name__ == "__main__":
 ## 주요 결과 및 인사이트
 
 1. **팀 클러스터링**: 20개 팀을 3개의 클러스터로 분류
-   - Cluster 1: 상위권 팀들
-   - Cluster 2: 중위권 팀들
-   - Cluster 3: 하위권 팀들
+   - Cluster 1: 첫 번째 특성의 팀들
+   - Cluster 2: 두 번째 특성의 팀들
+   - Cluster 3: 세 번째 특성의 팀들
 
 2. **중요 특성**: 
-   - 태클 수 (tackles)
-   - 클린시트 (clean_sheets)
-   - 클리어런스 (clearences)
-   - 상대 전적 (relative_record)
+    1.	interceptions	        0.300000
+    2.	relative_record	        0.233333
+    3.	clearences	            0.100000
+    3.	goals_from_outside_box	0.100000
 
 3. **모델 성능**:
    - Logistic Regression: ~52% 정확도
