@@ -20,7 +20,7 @@
 
 - **Python 3.9 + Poetry** : 패키지 관리 및 의존성 고정
 - **Docker & Docker Compose** : 환경 통일과 재현성 확보
-- **CI/CD (Jenkins + GitHub Actions)** : 테스트·빌드·배포 자동화
+- **CI/CD (Jenkins + Nginx)** : 테스트·빌드·배포 자동화
 - **MLOps** : 모델 버전 관리, 실험 추적(MLflow), 배포 자동화
 
 ---
