@@ -24,11 +24,10 @@
 - **MLOps** : 모델 버전 관리, 실험 추적(MLflow), 배포 자동화
 
 ---
-## ✨ 기여 방법
+## ✨ 외부 레포지토리
 
-1. 이슈 또는 기능 제안을 먼저 등록해 주세요.
-2. 포크 → 새로운 브랜치 생성(`feature/<주제>`) → 커밋 후 PR 생성
-3. 리뷰가 끝나면 메인 브랜치에 병합됩니다.
+1. mosaic-loan -> [MosaicLoan](https://github.com/Da-413/MosaicLoan)
+2. chicken-stock -> [ChickenStock](https://github.com/Da-413/chickenStock)
 
 ---
 ## 📜 라이선스
