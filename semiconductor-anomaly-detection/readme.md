@@ -1,256 +1,106 @@
-## [반도체 결함 탐지 모델](#반도체-결함-탐지-모델)
-```python
-!pip install tensorflow
+# 반도체 이미지 이상 탐지
+
+정상 이미지 중심의 데이터에서 이미지 특징을 추출하고 여러 비지도 이상 탐지 방법을 비교한 프로젝트입니다.
+
+기존 README에 노트북 코드가 그대로 나열되어 있던 내용을 정리하고, 전체 분석 흐름과 모델 선택 이유를 중심으로 구성했습니다.
+
+## 한눈에 보기
+
+| 항목 | 내용 |
+|---|---|
+| 문제 | 이미지 이상 탐지 |
+| 특징 추출 | Pretrained ResNet50 |
+| 비교 모델 | Isolation Forest, One-Class SVM, AutoEncoder |
+| 튜닝 | Bayesian Optimization |
+| 주요 기술 | PyTorch, TensorFlow/Keras, Scikit-learn |
+
+## 전체 흐름
+
+```text
+Image
+  ↓
+Resize / Normalize
+  ↓
+Pretrained ResNet50
+  ↓
+Embedding Vector
+  ↓
+┌─────────────────────────────┐
+│ Isolation Forest            │
+│ One-Class SVM               │
+│ AutoEncoder                 │
+└─────────────────────────────┘
+  ↓
+Normal / Anomaly
 ```
 
+## 1. 이미지 Feature 추출
+
+원본 이미지를 바로 비지도 모델에 입력하지 않고 ImageNet으로 사전 학습된 **ResNet50**을 feature extractor로 사용했습니다.
+
+마지막 classification layer를 제거하고 이미지마다 embedding vector를 생성해 이후 이상 탐지 모델의 입력으로 사용했습니다.
 
 ```python
-import pandas as pd
-import numpy as np
-import torch
-import tensorflow as tf
-from torchvision import models, transforms
-from torch.utils.data import DataLoader, Dataset
-from PIL import Image
-from sklearn.ensemble import IsolationForest
-from sklearn.svm import OneClassSVM as OCS
-from tqdm import tqdm
-from pyod.models.abod import ABOD
-import matplotlib.pyplot as plt
-from sklearn.metrics import silhouette_score, silhouette_samples
-from keras.models import Model, load_model
-from keras.layers import Input, Dense
-from keras.callbacks import ModelCheckpoint, TensorBoard
-from keras import regularizers
-```
-
-
-```python
-# GPU 사용 설정
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-```
-
-
-```python
-# 데이터 로딩 클래스 정의
-class CustomDataset(Dataset):
-    def __init__(self, csv_file, transform=None):
-        """
-        Args:
-            csv_file (string): csv 파일의 경로.
-            transform (callable, optional): 샘플에 적용될 Optional transform.
-        """
-        self.df = pd.read_csv(csv_file)
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.df)
-
-    def __getitem__(self, idx):
-        img_path = self.df['img_path'].iloc[idx]
-        image = Image.open(img_path)
-        if self.transform:
-            image = self.transform(image)
-        return image
-
-# 이미지 전처리 및 임베딩
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-
-train_data = CustomDataset(csv_file='./train.csv', transform=transform)
-train_loader = DataLoader(train_data, batch_size=32, shuffle=False)
-```
-
-
-```python
-# 사전 학습된 모델 로드
 model = models.resnet50(pretrained=True)
-model.eval()  # 추론 모드로 설정
-
-# 특성 추출을 위한 모델의 마지막 레이어 수정
 model = torch.nn.Sequential(*(list(model.children())[:-1]))
-
-model.to(device)
-
-# 이미지를 임베딩 벡터로 변환
-def get_embeddings(dataloader, model):
-    embeddings = []
-    with torch.no_grad():
-        for images in tqdm(dataloader):
-            images = images.to(device)
-            emb = model(images)
-            embeddings.append(emb.cpu().numpy().squeeze())
-    return np.concatenate(embeddings, axis=0)
-
-train_embeddings = get_embeddings(train_loader, model)
 ```
 
+입력 이미지는 224×224로 resize한 뒤 ImageNet 기준 mean/std로 normalize했습니다.
 
-```python
-# Isolation Forest 모델 학습
-clf = IsolationForest(random_state=42)
-clf.fit(train_embeddings)
-```
+## 2. 이상 탐지 모델
 
+### Isolation Forest
 
-```python
-# 테스트 데이터에 대해 이상 탐지 수행
-test_data = CustomDataset(csv_file='./test.csv', transform=transform)
-test_loader = DataLoader(test_data, batch_size=32, shuffle=False)
+정상 데이터가 주로 분포하는 영역과 떨어진 관측치를 분리하는 방식으로 이상 이미지를 탐지했습니다. 별도의 이상 클래스 학습 데이터 없이 적용할 수 있다는 점에서 baseline으로 사용했습니다.
 
-test_embeddings = get_embeddings(test_loader, model)
-test_pred = clf.predict(test_embeddings)
+### One-Class SVM
 
-# Isolation Forest의 예측 결과(이상 = -1, 정상 = 1)를 이상 = 1, 정상 = 0으로 변환
-test_pred = np.where(test_pred == -1, 1, 0)
-```
+정상 데이터의 경계를 학습하는 One-Class SVM을 비교했습니다. RBF kernel을 사용하고, 이상치 비율을 조절하는 `nu` 값을 Bayesian Optimization으로 탐색했습니다.
 
+튜닝 과정에서는 생성된 군집의 silhouette score를 목적값으로 사용했습니다.
 
-```python
-from bayes_opt import BayesianOptimization
-```
+### AutoEncoder
 
+ResNet50에서 추출한 embedding을 입력으로 받아 다시 복원하도록 AutoEncoder를 학습했습니다.
 
-```python
-def ocs_eval(nu):
-    model = OCS(
-        kernel = 'rbf',
-        nu=float(nu),
-        gamma='auto',
-        )
-    model.fit(train_embeddings)
-    label = model.predict(train_embeddings)
-    label = np.where(label == -1, 1, 0)
-    try:
-        score = silhouette_score(train_embeddings, label)
-    except ValueError:
-        score = -1.0
-    return score
+정상 데이터에서 학습한 reconstruction error를 기준으로 정상 패턴에서 크게 벗어난 샘플을 이상으로 분류했습니다.
 
-# 하이퍼파라미터 범위 설정
-pbounds = {
-    'nu': (0.0000001, 0.2)
-}
+## 3. 모델 비교 관점
 
-optimizer = BayesianOptimization(f=ocs_eval, pbounds=pbounds, random_state = 42)
-optimizer.maximize(init_points=3, n_iter=20)
-```
+세 모델은 이상을 판단하는 방식이 서로 다릅니다.
 
+| 모델 | 판단 방식 | 특징 |
+|---|---|---|
+| Isolation Forest | 데이터 공간에서의 고립 정도 | 빠른 baseline 구성 |
+| One-Class SVM | 정상 데이터의 경계 | kernel 기반 비선형 경계 |
+| AutoEncoder | reconstruction error | 신경망 기반 정상 패턴 학습 |
 
-```python
-max_para = optimizer.max['params']
-```
+한 모델의 결과만 사용하는 대신 서로 다른 방식의 비지도 모델을 구현하고 비교하면서 데이터에 적합한 이상 탐지 방식을 탐색했습니다.
 
+## 4. 코드 구성
 
-```python
-ocs = OCS(kernel='rbf',
-          nu=max_para['nu'], 
-          gamma = 'auto'
-         ).fit(train_embeddings)
+- `src/model.py` — AutoEncoder 구조
+- `src/train.py` — AutoEncoder 학습
+- `src/evaluate.py` — Precision / Recall / F1 평가
+- `notebook/semiconductor_anomaly_detection.ipynb` — 전체 실험 과정
 
-test_pred = ocs.predict(test_embeddings)
-test_pred = np.where(test_pred == -1, 1, 0)
-```
+## 기술 스택
 
+| 영역 | 기술 |
+|---|---|
+| Feature Extraction | PyTorch, torchvision, ResNet50 |
+| Anomaly Detection | Isolation Forest, One-Class SVM |
+| Deep Learning | TensorFlow/Keras, PyTorch |
+| Optimization | Bayesian Optimization |
+| Evaluation | Scikit-learn |
+| Data | Pandas, NumPy |
 
-```python
-submit = pd.read_csv('./sample_submission.csv')
-submit['label'] = test_pred
+## 핵심 경험
 
-submit.to_csv('./result_submit.csv', index=False)
-```
+라벨이 충분한 일반적인 분류 문제와 달리 정상 데이터 중심의 환경에서 **어떻게 이상을 정의하고 판단할 것인지**를 다뤘습니다.
 
+사전 학습 모델의 이미지 표현을 활용하고, 전통적인 이상 탐지 모델과 AutoEncoder를 같은 embedding 공간에서 비교하면서 모델마다 이상을 구분하는 기준이 어떻게 달라지는지 확인했습니다.
 
-```python
-from sklearn.model_selection import train_test_split
-import keras
-```
+## 실행 및 상세 실험
 
-
-```python
-X_train, X_test = train_test_split(train_embeddings, test_size=0.2, random_state=42)
-```
-
-
-```python
-input_dim = X_train.shape[1]
-
-encoder = keras.models.Sequential([
-    keras.layers.Dense(400, activation='relu', input_shape=[input_dim]),
-    keras.layers.Dropout(rate=0.1),
-    keras.layers.Dense(100, activation='relu'),
-    keras.layers.Dropout(rate=0.1),
-    keras.layers.Dense(50, activation='relu'),
-    keras.layers.Dropout(rate=0.1),
-    keras.layers.Dense(10, activation='relu')
-])
-
-decoder = keras.models.Sequential([
-    keras.layers.Dense(50, activation='relu', input_shape=[10]),
-    keras.layers.Dense(100, activation='relu'),
-    keras.layers.Dropout(rate=0.1),
-    keras.layers.Dense(400, activation='relu'),
-    keras.layers.Dropout(rate=0.1),
-    keras.layers.Dense(input_dim, activation='relu'),
-])
-
-autoencoder = keras.models.Sequential([encoder, decoder])
-
-autoencoder.compile(
-    loss='mean_squared_error', optimizer=keras.optimizers.Adam(), metrics=['mse'])
-```
-
-
-```python
-nb_epoch = 100
-batch_size = 320
-autoencoder.compile(optimizer='adam', 
-                    loss='mean_squared_error', 
-                    metrics=['accuracy'])
-checkpointer = ModelCheckpoint(filepath="model.h5",
-                               verbose=0,
-                               save_best_only=True)
-tensorboard = TensorBoard(log_dir='./logs',
-                          histogram_freq=0,
-                          write_graph=True,
-                          write_images=True)
-history = autoencoder.fit(X_train, X_train,
-                    epochs=nb_epoch,
-                    batch_size=batch_size,
-                    shuffle=True,
-                    validation_data=(X_test, X_test),
-                    verbose=1,
-                    callbacks=[checkpointer, tensorboard]).history
-```
-
-
-```python
-autoencoder = load_model('model.h5')
-```
-
-
-```python
-pred = autoencoder.predict(test_embeddings)
-```
-
-
-```python
-threshold = history['loss'][max(history['accuracy']) == history['accuracy']]
-
-loss = [0]*(test_embeddings.shape[0])
-
-for i in range(test_embeddings.shape[0]):
-        loss[i] = sum((test_embeddings[i] - pred[i])**2) / test_embeddings.shape[1]
-
-test_pred = np.array(loss) > threshold
-
-test_pred = test_pred.astype(int)
-```
-
-
-```python
-test_pred
-```
+실험 전체 과정과 파라미터는 `notebook/semiconductor_anomaly_detection.ipynb`에서 확인할 수 있습니다. README에는 핵심 구조만 남기고 긴 실험 코드는 노트북과 `src/` 파일로 분리했습니다.
