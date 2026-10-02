@@ -1,147 +1,85 @@
+# 모자익론 — P2P 대출 플랫폼
 
-# 모자익론 (P2P 재태크 플랫폼)
+차입자의 부도 가능성을 예측하고, 예측 모델을 실제 서비스에서 사용할 수 있도록 API로 연결한 P2P 대출 플랫폼 프로젝트입니다.
 
-> **설명**: 투자자의 자산을 ‘모자이크’처럼 여러 차입자에게 자동 분산하고, 차입자에게는 신용평가 기반 맞춤형 대출을 제공하는 P2P 금융 투자·대출 서비스입니다.  
-> **역할**: 개인 신용평가 모델 & AI 서빙 파트 리드 (Spark ML + Keras + FastAPI)
+> **담당:** 신용평가 모델 개발 · 데이터 전처리 · 모델 서빙
 
----
+## 한눈에 보기
 
-## 목차
-1. [프로젝트 개요](#프로젝트-개요)  
-2. [주요 기능](#주요-기능)  
-3. [시스템 구성도](#시스템-구성도)  
-4. [AI 모델링 파이프라인](#ai-모델링-파이프라인)  
-5. [기술 스택](#기술-스택)  
-6. [실행 방법](#실행-방법)  
-7. [도전 과제 및 해결 방안](#도전-과제-및-해결-방안)  
-8. [결과 및 인사이트](#결과-및-인사이트)  
-9. [참고 자료](#참고-자료)  
+| 항목 | 내용 |
+|---|---|
+| 팀 구성 | 6명 |
+| 주요 역할 | 부도율 예측 모델 개발 및 AI 서버 연동 |
+| 핵심 기술 | PySpark, Spark ML, Keras, FastAPI, Docker |
+| 모델 평가 | PR-AUC 중심, Recall과 F1-score 함께 확인 |
+| 최종 F1-score | **0.86** |
 
----
+## 문제 정의
 
-## 프로젝트 개요
-- **기간**: 2025‑02‑01 ~ 2025‑04‑01 (6 주)  
-- **인원**: 6명 (FE 2, BE 2, AI 2)  
-- **목표**  
-  1. 투자자의 입력(금액·목표수익률)만으로 자동 분산 투자 실행  
-  2. 차입자의 금융·비금융 데이터를 활용해 부도 확률 예측  
-  3. 투자·대출 현황을 실시간 대시보드로 시각화  
-- **성과 지표**  
-  | 지표 | 값 | 비고 |
-  |---|---|---|
-  | Ensemble AUC | **0.87** | 개인 신용평가 모델 검증 |
-  | 예측 API Latency | **< 1 s** | FastAPI – Spark ML 서빙 |
-  | 투자 손실률 감소 | **−25 %** | 분산 투자 적용 전후 시뮬레이션 |
+신용 데이터는 정상 상환 데이터에 비해 부도 데이터가 적은 **불균형 데이터**였습니다. 단순 Accuracy가 높더라도 실제 부도자를 정상으로 판단하는 False Negative가 많으면 신용평가 모델로서 의미가 떨어질 수 있다고 판단했습니다.
 
----
+따라서 Accuracy 하나로 모델을 선택하지 않고 다음 기준을 사용했습니다.
 
-## 주요 기능
-### 2‑1. 자동 분산 투자
-- 투자자는 **금액·목표수익률**만 입력 → 최적 포트폴리오 자동 생성  
-- 클러스터링(차입자 등급) + 시장지표(금리·경기)로 분산 비중 조정  
-- **위험 상한선**·**동일차입자 중복방지** 로직으로 손실 방어
+- **PR-AUC**: 불균형 데이터에서 모델의 전반적인 분류 성능 확인
+- **Recall**: 실제 부도자를 얼마나 놓치지 않는지 확인
+- **F1-score**: Recall을 높이는 과정에서 Precision이 지나치게 떨어지지 않는지 확인
 
-### 2‑2. 차입자 신용평가
-- Spark ML (GBDT·Logistic) 세 모델 + K‑Means 군집 결과를  
-  Keras Dense Network에 **확률 피처**로 결합 → Ensemble 모델 구축  
-- AUC 0.87, Accuracy 82 % 달성
+## 모델링
 
-### 2‑3. 실시간 투자·대출 대시보드
-- Next.js + Tailwind UI, WebSocket 스트림으로 수익·상환 현황 실시간 반영  
-- Docker Compose 로 프론트·백엔드·AI 컨테이너 오케스트레이션
+데이터 특성에 따라 변수군을 나누고 여러 모델의 예측 결과를 결합하는 방식으로 신용평가 모델을 구성했습니다.
 
----
+```text
+Raw Data
+   ↓
+PySpark 전처리
+   ↓
+변수군별 모델 학습
+   ↓
+모델별 예측 결과
+   ↓
+Ensemble
+   ↓
+부도 확률
+```
 
-## 시스템 구성도
-![시스템 아키텍처](./images/시스템아키텍쳐.png)
+모델 개선 과정에서 F1-score는 **0.3대 → 0.79 → 0.86**으로 개선했습니다. 최종 단계에서는 부도자를 놓치는 비용을 고려해 Recall을 확보하는 방향으로 classification threshold를 조정하고 F1-score를 함께 확인했습니다.
 
-> **Flow**  
-> ① Investor / Borrower → Gateway(FastAPI)  
-> ② 투자요청 → **Investment Engine** → PostgreSQL  
-> ③ 대출요청 → **Credit Scoring API** → Redis Cache + Spark Cluster  
-> ④ 데이터 → Grafana Dashboard
+## 데이터 처리
 
----
+대용량 데이터 처리와 반복적인 모델 학습을 위해 PySpark 기반 전처리 파이프라인을 구성했습니다. 모델 입력에 필요한 데이터를 정리하고 동일한 전처리 과정을 반복 적용할 수 있도록 구성했습니다.
 
-## AI 모델링 파이프라인
-### 4‑1. 데이터 레이어  
-| 서브셋 | 컬럼 수 | 설명 |
-|---|---|---|
-| Demographic | 14 | 나이·성별·직업·거주지 |
-| Credit Record | 23 | 기존 대출·연체 이력 |
-| Behavior | 31 | 카드·계좌 사용 패턴 |
-| Timeseries | 12 | 월별 상환·소득 추이 |
+## 모델 서빙
 
-### 4‑2. 모델 스택  
-1. **Timeseries Model** – Spark LGBM  
-2. **Behavior Model** – Spark GBTClassifier  
-3. **Record Model** – Spark LogisticRegression  
-4. **K‑Means** – 리스크 동질군 5개 도출  
-5. **Keras Ensemble** – 위 4개 결과를 Dense 4‑32‑16‑1, AUC Loss 커스텀
+학습한 모델을 프로젝트 백엔드에서 사용할 수 있도록 FastAPI 서버에 연결했습니다.
 
-> 전체 파이프라인은 `models/` 폴더에 저장, FastAPI startup 시 자동 로드
+```text
+Client / Backend
+       ↓
+    FastAPI
+       ↓
+전처리 및 모델 추론
+       ↓
+   예측 결과 반환
+```
 
----
+모델 실행 과정에서 메모리 사용량과 로딩 비용을 줄이기 위한 최적화도 진행했고, Docker 기반 환경에서 서비스와 연결했습니다.
 
 ## 기술 스택
-| 범주 | 사용 기술 |
+
+| 영역 | 기술 |
 |---|---|
-| **Backend / API** | FastAPI, Uvicorn, Pydantic |
-| **AI / ML** | PySpark 3, Spark MLlib, TensorFlow·Keras |
-| **Data** | PostgreSQL, Redis, Parquet |
-| **Infra & DevOps** | Docker, Docker Compose, Jenkins CI/CD |
-| **Frontend** | Next.js, Tailwind CSS, Framer Motion |
-| **협업 & 기타** | GitHub Projects, Slack, Figma |
+| Data / ML | Python, PySpark, Spark ML |
+| Deep Learning | TensorFlow, Keras |
+| Serving | FastAPI |
+| Infra | Docker, Jenkins |
+| Collaboration | Git, GitHub |
 
----
+## 핵심 경험
 
-## 실행 방법
-### 환경 준비 (Docker Compose)
-```bash
-# 1) 레포 클론
-git clone https://github.com/Da-413/MosaicLoan.git
-cd MosaicLoan
+이 프로젝트에서 가장 중요했던 부분은 단순히 높은 정확도를 만드는 것이 아니라 **문제의 비용 구조에 맞는 평가 기준을 선택한 것**이었습니다. 불균형 데이터에서 PR-AUC를 중심으로 모델을 비교하고, False Negative 비용을 고려해 Recall과 threshold를 조정했습니다.
 
-# 2) 모델 체크포인트 다운로드 (예: S3, 구글드라이브)
-./scripts/download_models.sh   # final_model.keras 등
+또한 학습한 모델을 노트북에 남겨두지 않고 FastAPI를 통해 실제 서비스에서 호출할 수 있는 형태까지 연결했습니다.
 
-# 3) 서비스 기동
-docker compose up -d           # api:8001, fe:3000
-```
+## 관련 코드
 
-### 로컬 개발 (선택)
-```bash
-# Python 가상환경
-python -m venv venv && source venv/bin/activate
-pip install -r api/requirements.txt
-
-# Spark 세션 경량 실행
-cd api
-uvicorn main:app --reload --port 8001
-```
-
----
-
-## 도전 과제 및 해결 방안
-| 과제 | 해결 방안 |
-|---|---|
-| Spark Driver 메모리 부족 | `spark.memory.fraction=0.6`, Kryo Serializer 적용 |
-| 다중 모델 로딩 지연 | 모델 별 lazy load + Redis warm‑cache |
-| 실시간 예측 <1 s | 예측 단계 Spark 사용 최소화 → Numpy 전환, batch size 1 inference |
-| 컨테이너 헬스체크 | `/health` 엔드포인트 + Jenkins pipeline fail fast |
-
----
-
-## 결과 및 인사이트
-1. **투자 손실률 25 % 감소** – 분산 투자 시뮬레이션  
-2. **AUC 0.87 / Latency <1 s** – 실시간 신용평가 API  
-3. **자동화 배포** – PR 머지 → Jenkins 빌드 → Docker Hub → Prod 서버 배포 완료까지 3 분
-
-> *“금융 리스크를 데이터로 관리하고, 투자·대출 경험을 모두 향상한다”* 는 목표를 달성했습니다.
-
----
-
-## 참고 자료
-- Kaggle Credit Risk Dataset  
-- Spark MLlib Docs <https://spark.apache.org/docs/latest/ml-guide.html>  
-- TensorFlow Addons AUC Loss 구현 <https://www.tensorflow.org/addons/api_docs/python/tfa/losses/AUCBinary>
+이 디렉터리에는 포트폴리오용으로 정리한 모델링 및 서비스 코드가 포함되어 있습니다. 전체 팀 프로젝트에서 사용한 일부 애플리케이션 코드는 별도 저장소에서 관리했습니다.
